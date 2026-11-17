@@ -98,6 +98,22 @@ create table if not exists public.reports (
   st text not null default 'open' check (st in ('open','removed','dismissed'))
 );
 
+-- 商品评论（2026-11-17 加）
+create table if not exists public.comments (
+  id bigserial primary key,
+  pid text not null references public.products(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  name text not null default '',
+  ch jsonb,
+  d text,                                              -- 评论时这个人的选择：buy / bye / wish / 空；卖家本人是 seller
+  body text not null check (char_length(body) between 1 and 300),
+  removed boolean not null default false,
+  t timestamptz not null default now()
+);
+create index if not exists comments_pid on public.comments (pid, t desc);
+alter table public.products add column if not exists nc int not null default 0;   -- 评论数
+alter table public.reports add column if not exists cid bigint references public.comments(id) on delete cascade;  -- 举报的是评论时填
+
 -- ============ 内部工具函数 ============
 create or replace function public.is_admin() returns boolean
 language sql stable security definer set search_path = public as $$
@@ -378,11 +394,65 @@ end $$;
 create or replace function public.report_item(_pid text, _reason text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if _reason not in ('illegal', 'porn', 'ip', 'fake', 'other') then raise exception 'reason'; end if;
+  if _reason not in ('illegal', 'porn', 'ip', 'fake', 'abuse', 'other') then raise exception 'reason'; end if;
   if not exists (select 1 from public.products where id = _pid) then raise exception 'gone'; end if;
-  if auth.uid() is not null and exists (select 1 from public.reports where pid = _pid and by_user = auth.uid()) then return; end if;
+  if auth.uid() is not null and exists (select 1 from public.reports where pid = _pid and cid is null and by_user = auth.uid()) then return; end if;
   if (select count(*) from public.reports where t > now() - interval '1 hour' and by_user is not distinct from auth.uid()) >= 20 then raise exception 'limit'; end if;
   insert into public.reports (pid, reason, by_user) values (_pid, _reason, auth.uid());
+end $$;
+
+-- ============ 评论 ============
+-- 看评论（游客也能看）。不返回评论人的 id，只告诉你哪条是你自己写的。
+create or replace function public.list_comments(_pid text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', c.id, 'name', c.name, 'ch', c.ch, 'd', c.d, 'body', c.body, 't', c.t,
+                                               'mine', c.user_id = auth.uid()) order by c.t desc), '[]')
+  from (select * from public.comments where pid = _pid and not removed order by t desc limit 200) c
+  where exists (select 1 from public.products p where p.id = _pid and (not p.removed or p.owner = auth.uid() or public.is_admin()));
+$$;
+
+create or replace function public.add_comment(_pid text, _body text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare me public.profiles; p public.products; b text := trim(coalesce(_body, '')); dd text; c public.comments;
+begin
+  me := public._me();
+  if me.banned then raise exception 'banned'; end if;
+  if me.weekly <= 0 then raise exception 'setup'; end if;
+  if char_length(b) = 0 or char_length(b) > 300 then raise exception 'body'; end if;
+  select * into p from public.products where id = _pid;
+  if not found or p.removed then raise exception 'gone'; end if;
+  if (select count(*) from public.comments where user_id = me.id and t > now() - interval '1 minute') >= 5
+     or (select count(*) from public.comments where user_id = me.id and t > now() - interval '1 day') >= 100 then raise exception 'limit'; end if;
+  if p.owner = me.id then dd := 'seller'; else select d into dd from public.decisions where user_id = me.id and pid = _pid; end if;
+  insert into public.comments (pid, user_id, name, ch, d, body) values (_pid, me.id, me.name, me.ch, dd, b) returning * into c;
+  update public.products set nc = nc + 1 where id = _pid;
+  return jsonb_build_object('id', c.id, 'name', c.name, 'ch', c.ch, 'd', c.d, 'body', c.body, 't', c.t, 'mine', true);
+end $$;
+
+-- 删评论：自己的可以删，管理员可以删任何人的
+create or replace function public.delete_comment(_id bigint) returns void
+language plpgsql security definer set search_path = public as $$
+declare c public.comments;
+begin
+  if auth.uid() is null then raise exception 'auth'; end if;
+  select * into c from public.comments where id = _id for update;
+  if not found or c.removed then return; end if;
+  if c.user_id <> auth.uid() and not public.is_admin() then raise exception 'own'; end if;
+  update public.comments set removed = true where id = _id;
+  update public.products set nc = greatest(0, nc - 1) where id = c.pid;
+  update public.reports set st = 'removed' where cid = _id and st = 'open';
+end $$;
+
+create or replace function public.report_comment(_id bigint, _reason text) returns void
+language plpgsql security definer set search_path = public as $$
+declare c public.comments;
+begin
+  if _reason not in ('illegal', 'porn', 'ip', 'fake', 'abuse', 'other') then raise exception 'reason'; end if;
+  select * into c from public.comments where id = _id and not removed;
+  if not found then raise exception 'gone'; end if;
+  if auth.uid() is not null and exists (select 1 from public.reports where cid = _id and by_user = auth.uid()) then return; end if;
+  if (select count(*) from public.reports where t > now() - interval '1 hour' and by_user is not distinct from auth.uid()) >= 20 then raise exception 'limit'; end if;
+  insert into public.reports (pid, cid, reason, by_user) values (c.pid, _id, _reason, auth.uid());
 end $$;
 
 -- 用串门码看别人的房间（不用登录也能看）
@@ -451,6 +521,7 @@ alter table public.decisions enable row level security;
 alter table public.inventory enable row level security;
 alter table public.ledger enable row level security;
 alter table public.reports enable row level security;
+alter table public.comments enable row level security;
 
 drop policy if exists "read own profile" on public.profiles;
 create policy "read own profile" on public.profiles for select using (id = auth.uid() or public.is_admin());
@@ -470,21 +541,24 @@ drop policy if exists "read own inventory" on public.inventory;
 create policy "read own inventory" on public.inventory for select using (user_id = auth.uid() or public.is_admin());
 drop policy if exists "read own ledger" on public.ledger;
 create policy "read own ledger" on public.ledger for select using (user_id = auth.uid() or public.is_admin());
+drop policy if exists "admin reads comments" on public.comments;
+create policy "admin reads comments" on public.comments for select using (public.is_admin());
 drop policy if exists "admin reads reports" on public.reports;
 create policy "admin reads reports" on public.reports for select using (public.is_admin());
 
 -- 网页只能读；所有修改都必须走上面的函数（函数里有检查）
 revoke all on all tables in schema public from anon, authenticated;
 grant select on public.products to anon, authenticated;
-grant select on public.profiles, public.insights, public.decisions, public.inventory, public.ledger, public.reports to authenticated;
+grant select on public.profiles, public.insights, public.decisions, public.inventory, public.ledger, public.reports, public.comments to authenticated;
 grant update (name, ch, theme) on public.profiles to authenticated;
 
 revoke execute on all functions in schema public from public, anon, authenticated;
 -- is_admin 会在读取规则里用到，所以游客也要能调用（它只回答“我是不是管理员”）
-grant execute on function public.room_by_code(text), public.report_item(text, text), public.is_admin() to anon, authenticated;
+grant execute on function public.room_by_code(text), public.report_item(text, text), public.is_admin(), public.list_comments(text), public.report_comment(bigint, text) to anon, authenticated;
 grant execute on function public.setup(text, jsonb, numeric), public.set_weekly(numeric), public.claim_pay(), public.decide(text, text),
   public.undo_decision(text), public.set_wtp(text, numeric), public.redo_byes(), public.publish(jsonb), public.reprice(text, numeric),
   public.take_down(text), public.place_sample(text), public.am_i_admin(), public.is_admin(),
+  public.add_comment(text, text), public.delete_comment(bigint),
   public.admin_users(), public.admin_remove(text), public.admin_restore(text), public.admin_dismiss(bigint), public.admin_ban(uuid, boolean)
   to authenticated;
 
