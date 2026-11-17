@@ -6,7 +6,8 @@
   const $ = (q, el) => (el || document).querySelector(q);
   const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const CAT = { wall: '墙上', table: '桌上', floor: '地上', shelf: '书架', wear: '衣柜' };
-  const REASON = { illegal: '违法违禁', porn: '色情低俗', ip: '盗图或侵权', fake: '虚假信息', other: '其他' };
+  const REASON = { illegal: '违法违禁', porn: '色情低俗', ip: '盗图或侵权', fake: '虚假信息', abuse: '人身攻击或骚扰', other: '其他' };
+  const CHOICE = { buy: '买了', bye: '没买', wish: '想买', seller: '卖家' };
   const date = (t) => (t ? new Date(t).toLocaleString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
   let tab = 'home', filter = 'all', q = '', D = null;
 
@@ -14,7 +15,7 @@
   function localData() {
     const s = S.s, users = [];
     if (s.user) users.push({ id: 'me', name: s.user.name, email: s.user.email, t: s.user.t, weekly: s.w.weekly, bought: s.inv.filter((i) => !i.sample).length, listed: s.lst.length, char: s.user.char, demo: false, banned: !!s.mod.banned.me });
-    return { users, products: s.lst.concat(QL.SEED.products), reports: s.mod.reports, removed: s.mod.removed };
+    return { users, products: s.lst.concat(QL.SEED.products), reports: s.mod.reports, removed: s.mod.removed, comments: s.comments.map((c) => ({ id: c.id, pid: c.pid, name: c.name, body: c.body, d: c.d, t: c.t, removed: !!c.removed })) };
   }
   function withDemo(d) {
     QL.SEED.neighbors.forEach((n) => d.users.push({ id: n.id, name: L(n.name), email: '（演示邻居，没有邮箱）', t: 0, weekly: 0, bought: n.items.length, listed: 0, char: n.char, demo: true, code: n.code }));
@@ -27,7 +28,7 @@
   function act(kind, arg, on) {
     if (!S.cloud) {
       S.reload(); // 先读最新的，避免盖掉网站那边刚存的东西
-      if (kind === 'remove') S.adminRemove(arg); else if (kind === 'restore') S.adminRestore(arg); else if (kind === 'dismiss') S.adminDismiss(arg);
+      if (kind === 'remove') S.adminRemove(arg); else if (kind === 'restore') S.adminRestore(arg); else if (kind === 'dismiss') S.adminDismiss(arg); else if (kind === 'delComment') S.deleteComment(arg);
       else S.setBan(arg, on);
       return load();
     }
@@ -43,7 +44,7 @@
 
   function renderTabs() {
     const n = openReports().length;
-    $('#tabs').innerHTML = [['home', '概览'], ['products', '商品'], ['users', '用户'], ['reports', '举报']].map(([k, v]) => `<button data-t="${k}" class="${tab === k ? 'on' : ''}">${v}${k === 'reports' && n ? `<b>${n}</b>` : ''}</button>`).join('');
+    $('#tabs').innerHTML = [['home', '概览'], ['products', '商品'], ['users', '用户'], ['comments', '评论'], ['reports', '举报']].map(([k, v]) => `<button data-t="${k}" class="${tab === k ? 'on' : ''}">${v}${k === 'reports' && n ? `<b>${n}</b>` : ''}</button>`).join('');
   }
   function productRow(p) {
     const st = S.stats(p.id), off = removed(p), rep = reportedIds()[p.id];
@@ -92,14 +93,27 @@
     const rs = D.reports;
     if (!rs.length) return '<div class="tbl" style="margin-top:20px"><div class="empty">还没有举报。用户在商品详情里点「举报这件商品」后，会出现在这里。</div></div>';
     return `<div class="tbl" style="margin-top:20px"><div class="row head r-row"><div></div><div>商品</div><div class="c3">原因</div><div class="c4">举报人</div><div class="c5">时间</div><div class="c6">处理</div></div>
-      ${rs.map((r) => { const p = S.product(r.pid); if (!p) return ''; const done = r.st !== 'open';
+      ${rs.map((r) => { const p = S.product(r.pid); if (!p) return ''; const done = r.st !== 'open'; const c = r.cid != null ? (D.comments || []).find((x) => String(x.id) === String(r.cid)) : null;
+        if (r.cid != null) return `<div class="row r-row ${done ? 'off' : ''}">${thumb(p)}<div><div class="t">评论：${esc(c ? c.body : '（已删除）')}</div><div class="s">${esc(c ? c.name : '')} · 在「${esc(L(p.title))}」下</div></div>
+          <div class="c3"><span class="tag gold">${REASON[r.reason] || r.reason}</span></div><div class="s c4" style="margin:0">${esc(r.by || '游客')}</div><div class="s c5" style="margin:0">${date(r.t)}</div>
+          <div class="c6">${done ? `<span class="tag ${r.st === 'removed' ? 'bad' : ''}">${r.st === 'removed' ? '已删除评论' : '已忽略'}</span>` : `<button class="act del" data-delc="${r.cid}">删除评论</button> <button class="act" data-dismiss="${r.id}">忽略</button>`}</div></div>`;
         return `<div class="row r-row ${done ? 'off' : ''}">${thumb(p)}<div><div class="t">${esc(L(p.title))}</div><div class="s">${esc(L(p.seller))} · ${S.fmt(p.price)}</div></div>
           <div class="c3"><span class="tag gold">${REASON[r.reason] || r.reason}</span></div><div class="s c4" style="margin:0">${esc(r.by || '游客')}</div><div class="s c5" style="margin:0">${date(r.t)}</div>
           <div class="c6">${done ? `<span class="tag ${r.st === 'removed' ? 'bad' : ''}">${r.st === 'removed' ? '已下架商品' : '已忽略'}</span>` : `<button class="act del" data-remove="${p.id}">下架商品</button> <button class="act" data-dismiss="${r.id}">忽略</button>`}</div></div>`; }).join('')}</div>`;
   }
+  function viewComments() {
+    const k = q.trim().toLowerCase();
+    let cs = (D.comments || []).filter((c) => (filter === 'removed' ? c.removed : !c.removed));
+    if (k) cs = cs.filter((c) => (c.body + ' ' + c.name).toLowerCase().includes(k));
+    return `<div class="bar"><button class="chip ${filter !== 'removed' ? 'on' : ''}" data-f="all">显示中</button><button class="chip ${filter === 'removed' ? 'on' : ''}" data-f="removed">已删除</button><input class="search" id="q" placeholder="搜索评论内容或昵称" value="${esc(q)}"></div>
+      <div class="tbl">${cs.length ? cs.map((c) => { const p = S.product(c.pid);
+        return `<div class="row p-row ${c.removed ? 'off' : ''}">${p ? thumb(p) : '<div></div>'}<div><div class="t" style="white-space:normal">${esc(c.body)}</div><div class="s">${esc(c.name)}${CHOICE[c.d] ? ' · ' + CHOICE[c.d] : ''} · 在「${esc(p ? L(p.title) : c.pid)}」下</div></div>
+          <div class="s c3" style="margin:0">${date(c.t)}</div><div class="c4"></div><div class="c5">${c.removed ? '<span class="tag bad">已删除</span>' : '<span class="tag ok">显示中</span>'}</div>
+          <div>${c.removed ? '' : `<button class="act del" data-delc="${c.id}">删除</button>`}</div></div>`; }).join('') : `<div class="empty">${filter === 'removed' ? '没有删除过的评论' : '还没有人发评论。演示邻居的评论是内置的，不在这里管理。'}</div>`}</div>`;
+  }
   function render() {
     renderTabs();
-    $('#view').innerHTML = tab === 'home' ? viewHome() : tab === 'products' ? viewProducts() : tab === 'users' ? viewUsers() : viewReports();
+    $('#view').innerHTML = tab === 'home' ? viewHome() : tab === 'products' ? viewProducts() : tab === 'users' ? viewUsers() : tab === 'comments' ? viewComments() : viewReports();
     document.querySelectorAll('[data-av]').forEach((c) => { const u = users().find((x) => x.id === c.dataset.av); if (u) G.avatar(c, u.char); });
     const inp = $('#q'); if (inp) inp.oninput = () => { q = inp.value; const pos = inp.selectionStart; render(); const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); };
   }
@@ -114,7 +128,7 @@
   document.addEventListener('click', (e) => {
     const b = (k) => e.target.closest('[data-' + k + ']');
     let x;
-    if ((x = b('t'))) { tab = x.dataset.t; render(); return; }
+    if ((x = b('t'))) { if (tab !== x.dataset.t) { filter = 'all'; q = ''; } tab = x.dataset.t; render(); return; }
     if ((x = b('f'))) { filter = x.dataset.f; render(); return; }
     if ((x = b('view'))) { preview(x.dataset.view); return; }
     if (b('close') || e.target.classList.contains('modal')) { $('#modal').innerHTML = ''; return; }
@@ -122,6 +136,7 @@
     if ((x = b('remove'))) { if (!confirm('确定下架这件商品？所有人都会看不到它。')) return; p = act('remove', x.dataset.remove); }
     else if ((x = b('restore'))) p = act('restore', x.dataset.restore);
     else if ((x = b('dismiss'))) p = act('dismiss', S.cloud ? +x.dataset.dismiss : x.dataset.dismiss);
+    else if ((x = b('delc'))) { if (!confirm('确定删除这条评论？所有人都会看不到它。')) return; p = act('delComment', S.cloud ? +x.dataset.delc : x.dataset.delc); }
     else if ((x = b('ban'))) { const u = users().find((y) => y.id === x.dataset.ban); if (!u || u.demo) return alert('演示邻居不能停用'); if (!u.banned && !confirm(`确定停用「${u.name}」？TA 的商品会全部下架，也不能再买卖。`)) return; p = act('ban', u.id, !u.banned); }
     else if (b('refresh')) p = load();
     else if (b('out')) { S.signOut().then(() => location.reload()); return; }

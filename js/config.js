@@ -8,3 +8,5 @@ QL.CONFIG = {
   url: 'https://zvrclkamdgrnwkdvnkzk.supabase.co',
   key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp2cmNsa2FtZGdybndrZHZua3prIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4MjQzMzQsImV4cCI6MjExMDQwMDMzNH0.yzWkYnBV_2CKBVbiRej2GU26UVoa6MjKOsjJtxHzVeg',
 };
+// 网址后面加 ?demo 就用本地演示版（数据只在这台设备上，不连服务器），方便试用和测试
+if (/[?&]demo\b/.test(location.search)) QL.CONFIG = { url: '', key: '' };

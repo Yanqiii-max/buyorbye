@@ -144,6 +144,7 @@
       h += '</div>';
     }
     if (l.hist.length) h += `<div class="sec"><h4>${t('d_hist')}</h4><div class="tbl">${l.hist.map((x) => `<div><span>${t('d_hist_row', { p: S.fmt(x.price), v: x.v })}</span><b>${x.v ? Math.round(x.b / x.v * 100) : 0}%</b></div>`).join('')}</div></div>`;
+    h += `<div class="btnrow"><button class="b2 sm" data-a="comments">${t('cm_title')}${S.commentCount(l.id) ? ' · ' + S.commentCount(l.id) : ''}</button></div>`;
     if (l.active && !l.sold) h += `<div class="btnrow"><button class="b1 sm" data-a="reprice">${t('d_reprice')}</button>${l.kind === 'new' ? `<button class="b2 sm" data-a="sample">${t('d_sample')}</button>` : ''}</div><div style="text-align:center"><button class="b3 danger" data-a="remove">${t('d_remove')}</button></div>`;
     h += `<div class="note">${t('d_demo')}</div>`;
     return h;
@@ -157,6 +158,7 @@
     sh.body.onclick = (e) => {
       const a = e.target.closest('[data-a]'); if (!a) return;
       const x = S.product(id);
+      if (a.dataset.a === 'comments') { ui.openComments(x); return; }
       if (a.dataset.a === 'reprice') {
         const s2 = ui.sheet({ title: t('d_reprice'), html: `<div class="fld" style="margin-top:0"><label>${t('d_reprice_q')}</label><div class="money"><span>${S.sym()}</span><input id="rp" inputmode="decimal" maxlength="10" value="${S.fromBase(x.price)}"></div></div><div class="btnrow"><button class="b1" id="rp-ok">${t('w_save')}</button></div>` });
         $('#rp-ok', s2.body).onclick = () => { const v = parseFloat($('#rp', s2.body).value); if (!(v > 0)) return; Promise.resolve(S.reprice(id, S.toBase(v))).then(() => { s2.close(); ui.toast(t('d_reprice_ok')); dash.sig = ''; draw(); if (tab === 'mine') render(); }, (er) => ui.toast(ui.errText(er))); };

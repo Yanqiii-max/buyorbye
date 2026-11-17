@@ -86,6 +86,28 @@
       { id: 'lucas', code: 'LUCAS', name: 'Lucas', theme: 'cream', char: { gender: 'm', outfit: 4, hair: 2, skin: 2 }, items: ['watch', 'handheld', 'headphones', 'keyboard', 'sneakers', 'beanbag', 'vinyl', 'candle'] },
     ],
   };
+  /* 演示评论（演示邻居写的，本地版和联网版都会显示在官方商品下面）。h = 几小时前 */
+  const C = (pid, who, d, h, zh, en) => ({ pid, who, d, h, body: { zh, en } });
+  QL.SEED.comments = [
+    C('mug', 'momo', 'buy', 5, '云朵画得刚刚好，268 我能接受。', 'The cloud is just right. 268 feels fair.'),
+    C('mug', 'lucas', 'bye', 30, '好看，但我家杯子太多了，如果 199 我就买。', 'Lovely, but I own too many mugs. At 199 I would.'),
+    C('dusk', 'ashu', 'bye', 12, '颜色很温柔。1280 对我来说有点高。', 'Such gentle colours. 1,280 is a bit high for me.'),
+    C('dusk', 'momo', 'buy', 50, '下班路上那一分钟，太懂了。', 'That one minute on the way home — I get it.'),
+    C('lamp', 'momo', 'buy', 8, '拍一下亮这个设计好可爱。', 'Tap-to-light is adorable.'),
+    C('beanbag', 'ashu', 'buy', 20, '能不能出一个燕麦色？', 'Could you do an oat colour too?'),
+    C('watch', 'lucas', 'buy', 3, '月相会走，这个价格不算贵。', 'A moving moonphase at this price is not bad at all.'),
+    C('watch', 'ashu', 'bye', 26, '好看，但我不戴表。', 'Beautiful, but I never wear watches.'),
+    C('keyboard', 'ashu', 'buy', 14, '“声音像敲雨点”这句话把我说服了。', '"Sounds like rain" sold me.'),
+    C('catmug', 'momo', 'buy', 2, '杯底的猫爪太犯规了！', 'The paw feet are unfair. Bought.'),
+    C('car', 'lucas', 'buy', 9, '假装有钱的快乐。', 'The joy of pretending to be rich.'),
+    C('jet', 'lucas', 'bye', 40, '等我先买得起游艇再说。', 'Let me afford the yacht first.'),
+    C('dragonjacket', 'ashu', 'buy', 18, '刺绣细节很好，希望有 M 码。', 'Great embroidery. Hoping for size M.'),
+    C('moonlamp', 'momo', 'buy', 6, '睡前开着它很治愈。', 'So soothing at bedtime.'),
+    C('jellylamp', 'ashu', 'wish', 22, '钱不够，先记下了，下周再来。', 'Short this week. Saved it for later.'),
+    C('froglamp', 'momo', 'buy', 11, '奶蛙的肚子会发光！', 'The frog belly glows!'),
+    C('gown', 'momo', 'bye', 36, '美，但我没有地方穿。', 'Gorgeous, but nowhere to wear it.'),
+    C('sponge', 'lucas', 'buy', 4, '9.9 不用想，直接买。', 'At 9.9, no need to think.'),
+  ];
   /* 小人的可选外观 */
   QL.LOOK = {
     outfits: [{ top: '#F2B544', bottom: '#3F5B8A' }, { top: '#F28C8C', bottom: '#6C5B7B' }, { top: '#7FB7A4', bottom: '#44566A' }, { top: '#8FA8E8', bottom: '#F4EDE4' }, { top: '#2F2D2B', bottom: '#C9B79C' }],

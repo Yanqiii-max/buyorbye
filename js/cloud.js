@@ -32,7 +32,7 @@
   const SEG0 = () => [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]];
 
   /* 把数据库里的错误变成网页能认的代号 */
-  const CODES = ['insufficient', 'sold', 'gone', 'banned', 'already', 'own', 'setup', 'wait', 'late', 'used', 'listed', 'limit', 'imgs', 'auth', 'weekly', 'name', 'title'];
+  const CODES = ['body', 'insufficient', 'sold', 'gone', 'banned', 'already', 'own', 'setup', 'wait', 'late', 'used', 'listed', 'limit', 'imgs', 'auth', 'weekly', 'name', 'title'];
   function err(e) {
     const m = String((e && (e.message || e.error_description)) || e || '');
     const x = new Error(m);
@@ -52,7 +52,7 @@
       id: r.id, remote: true, owner: r.owner, mine: !!(me && r.owner === me.id), kind: r.kind, cat: r.cat, price: +r.price, target: +r.target || 0,
       title: r.title, desc: r.descr || '', frame: !!r.frame, img: (r.imgs || []).map(pubURL), sticker: pubURL(r.sticker), art: r.art || null, pic: r.pic || null, sid: r.sid || null,
       bg: r.bg || '#F3EEE6', rh: +r.rh || S.RH[r.cat], ref: +r.ref || 0, seller: r.seller || '', t: Date.parse(r.created_at), fromInv: r.from_inv || null,
-      active: r.active, sold: r.sold, removed: r.removed, v: r.v, b: r.b,
+      active: r.active, sold: r.sold, removed: r.removed, v: r.v, b: r.b, nc: r.nc || 0,
     });
     p.stats = { v: r.v, b: r.b, cant: i ? i.cant : 0, wtps: i ? (i.wtps || []).map(Number) : [], seg: i ? i.seg : SEG0() };
     p.hist = i ? (i.hist || []).map((h) => ({ price: +h.price, v: h.v, b: h.b, t: Date.parse(h.t) })) : [];
@@ -68,7 +68,7 @@
   /* ---------- 读数据 ---------- */
   async function loadPublic() {
     const [o, l] = await Promise.all([
-      sb.from('products').select('id,v,b,sold,removed,active').is('owner', null),
+      sb.from('products').select('id,v,b,sold,removed,active,nc').is('owner', null),
       sb.from('products').select('*').not('owner', 'is', null).eq('active', true).eq('removed', false).eq('sold', false).order('created_at', { ascending: false }).limit(300),
     ]);
     if (!o.error) { off = {}; (o.data || []).forEach((r) => (off[r.id] = r)); offLoaded = (o.data || []).length > 0; }
@@ -249,6 +249,21 @@
   setInterval(() => poll().catch(() => { }), 15000);
   S.simTick = () => queue.splice(0);
 
+  /* ---------- 评论 ---------- */
+  S.comments = async function (pid) {
+    const rows = (await rpc('list_comments', { _pid: pid })) || [];
+    const real = rows.map((c) => ({ id: c.id, pid, name: c.name, ch: c.ch, d: c.d, body: c.body, t: Date.parse(c.t), mine: !!c.mine }));
+    return real.concat(S.demoComments(pid)).sort((a, b) => b.t - a.t);
+  };
+  const bumpCount = (pid, k) => { const p = S.product(pid); if (p && p.remote) p.nc = Math.max(0, (p.nc || 0) + k); else off[pid] = Object.assign({}, offOf(pid), { nc: Math.max(0, (offOf(pid).nc || 0) + k) }); };
+  S.addComment = async function (pid, body) {
+    const c = await rpc('add_comment', { _pid: pid, _body: body }); bumpCount(pid, 1);
+    return { id: c.id, pid, name: c.name, ch: c.ch, d: c.d, body: c.body, t: Date.parse(c.t), mine: true };
+  };
+  S.deleteComment = async function (id, pid) { await rpc('delete_comment', { _id: id }); if (pid) bumpCount(pid, -1); };
+  S.reportComment = (id, reason) => rpc('report_comment', { _id: id, _reason: reason });
+  S.commentCount = function (pid) { const p = S.product(pid); return p && p.remote ? p.nc || 0 : (offOf(pid).nc || 0) + S.demoCount(pid); };
+
   /* ---------- 串门 ---------- */
   S.roomByCode = async function (code) {
     code = String(code || '').trim().toUpperCase();
@@ -263,13 +278,14 @@
 
   /* ---------- 管理后台 ---------- */
   S.adminLoad = async function () {
-    const [u, l, o, r] = await Promise.all([
+    const [u, l, o, r, cm] = await Promise.all([
       rpc('admin_users'),
       sb.from('products').select('*, insights(*)').not('owner', 'is', null).order('created_at', { ascending: false }).limit(2000),
-      sb.from('products').select('id,v,b,sold,removed,active').is('owner', null),
+      sb.from('products').select('id,v,b,sold,removed,active,nc').is('owner', null),
       sb.from('reports').select('*').order('t', { ascending: false }).limit(1000),
+      sb.from('comments').select('*').order('t', { ascending: false }).limit(1000),
     ]);
-    if (l.error || o.error || r.error) throw err(l.error || o.error || r.error);
+    if (l.error || o.error || r.error || cm.error) throw err(l.error || o.error || r.error || cm.error);
     (o.data || []).forEach((x) => (off[x.id] = x));
     const users = (u || []).map((x) => ({ id: x.id, name: x.name || '（还没起名）', email: x.email, t: Date.parse(x.created_at), weekly: +x.weekly, bought: x.bought, listed: x.listed, char: x.ch, demo: false, banned: x.banned, code: x.code }));
     const names = {}; users.forEach((x) => (names[x.id] = x.name));
@@ -277,13 +293,15 @@
     const removed = {}; listings.forEach((p) => { if (p.removed) removed[p.id] = 1; }); (o.data || []).forEach((x) => { if (x.removed) removed[x.id] = 1; });
     return {
       users, removed, products: listings.concat(QL.SEED.products),
-      reports: (r.data || []).map((x) => ({ id: x.id, pid: x.pid, reason: x.reason, t: Date.parse(x.t), by: names[x.by_user] || '', st: x.st })),
+      reports: (r.data || []).map((x) => ({ id: x.id, pid: x.pid, cid: x.cid, reason: x.reason, t: Date.parse(x.t), by: names[x.by_user] || '', st: x.st })),
+      comments: (cm.data || []).map((x) => ({ id: x.id, pid: x.pid, name: x.name, body: x.body, d: x.d, t: Date.parse(x.t), removed: x.removed, uid: x.user_id })),
     };
   };
   S.adminAct = {
     remove: (pid) => rpc('admin_remove', { _pid: pid }),
     restore: (pid) => rpc('admin_restore', { _pid: pid }),
     dismiss: (id) => rpc('admin_dismiss', { _id: id }),
+    delComment: (id) => rpc('delete_comment', { _id: id }),
     ban: (uid, on) => rpc('admin_ban', { _uid: uid, _on: on }),
   };
 

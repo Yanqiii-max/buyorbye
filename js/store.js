@@ -34,7 +34,7 @@
     return 'USD';
   }
   function fresh() {
-    return { v: 1, user: null, set: { lang: QL.i18n.auto(), cur: autoCur(), theme: 'cream' }, w: { bal: 0, weekly: 0, last: 0, chg: 0, led: [] }, dec: {}, inv: [], lst: [], bump: {}, sold: {}, seq: 1, skew: 0, hide: {}, mod: { removed: {}, reports: [], banned: {} } };
+    return { v: 1, user: null, set: { lang: QL.i18n.auto(), cur: autoCur(), theme: 'cream' }, w: { bal: 0, weekly: 0, last: 0, chg: 0, led: [] }, dec: {}, inv: [], lst: [], bump: {}, sold: {}, seq: 1, skew: 0, hide: {}, mod: { removed: {}, reports: [], banned: {} }, comments: [] };
   }
   const now = () => Date.now() + (s ? s.skew : 0);
   function save() { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { } }
@@ -210,7 +210,7 @@
     s.inv.push(it); save(); return it;
   }
   /* ---------- 举报与管理（本地演示版：只作用于这台设备的数据） ---------- */
-  function migrate() { s.hide = s.hide || {}; s.mod = s.mod || {}; s.mod.removed = s.mod.removed || {}; s.mod.reports = s.mod.reports || []; s.mod.banned = s.mod.banned || {}; }
+  function migrate() { s.comments = s.comments || []; s.hide = s.hide || {}; s.mod = s.mod || {}; s.mod.removed = s.mod.removed || {}; s.mod.reports = s.mod.reports || []; s.mod.banned = s.mod.banned || {}; }
   function report(pid, reason) { s.mod.reports.unshift({ id: 'r' + (s.seq++), pid, reason, t: now(), by: s.user ? s.user.name : '', st: 'open' }); s.hide[pid] = 1; save(); }
   function adminRemove(pid, why) {
     s.mod.removed[pid] = { t: now(), why: why || '' };
@@ -222,6 +222,27 @@
   function adminRestore(pid) { delete s.mod.removed[pid]; const l = s.lst.find((x) => x.id === pid); if (l) { l.removed = false; if (!l.sold) { l.active = true; l.simT = now(); } } save(); }
   function adminDismiss(rid) { const r = s.mod.reports.find((x) => x.id === rid); if (r) r.st = 'dismissed'; save(); }
   function setBan(uid, on) { if (on) s.mod.banned[uid] = now(); else delete s.mod.banned[uid]; save(); }
+  /* ---------- 评论 ---------- */
+  function demoComments(pid) {
+    const nb = {}; QL.SEED.neighbors.forEach((n) => (nb[n.id] = n));
+    return (QL.SEED.comments || []).map((c, i) => ({ c, i })).filter((x) => x.c.pid === pid && seedMap[pid]).map(({ c, i }) => {
+      const n = nb[c.who] || {}; return { id: 'demo' + i, pid, name: QL.i18n.L(n.name), ch: n.char, d: c.d, body: QL.i18n.L(c.body), t: Date.now() - c.h * 36e5, demo: true };
+    });
+  }
+  const demoCount = (pid) => (QL.SEED.comments || []).filter((c) => c.pid === pid && seedMap[pid]).length;
+  function comments(pid) {
+    const mine = s.comments.filter((c) => c.pid === pid && !c.removed).map((c) => Object.assign({}, c, { mine: true }));
+    return Promise.resolve(mine.concat(demoComments(pid)).sort((a, b) => b.t - a.t));
+  }
+  function addComment(pid, body) {
+    body = String(body || '').trim(); if (!body || body.length > 300) return Promise.reject(Object.assign(new Error('body'), { code: 'body' }));
+    const p = product(pid), d = p && p.mine ? 'seller' : (s.dec[pid] && s.dec[pid].d) || null;
+    const c = { id: 'c' + (s.seq++), pid, name: s.user ? s.user.name : '', ch: s.user ? s.user.char : null, d, body, t: now() };
+    s.comments.push(c); save(); return Promise.resolve(Object.assign({ mine: true }, c));
+  }
+  function deleteComment(id) { const c = s.comments.find((x) => x.id === id); if (c) { c.removed = true; s.mod.reports.forEach((r) => { if (r.cid === id && r.st === 'open') r.st = 'removed'; }); save(); } return Promise.resolve(); }
+  function reportComment(id, reason, pid) { s.mod.reports.unshift({ id: 'r' + (s.seq++), pid, cid: id, reason, t: now(), by: s.user ? s.user.name : '', st: 'open' }); save(); return Promise.resolve(); }
+  const commentCount = (pid) => demoCount(pid) + s.comments.filter((c) => c.pid === pid && !c.removed).length;
   const nice = (x) => (x < 20 ? Math.max(1, Math.round(x)) : x < 100 ? Math.round(x / 5) * 5 : x < 1000 ? Math.round(x / 10) * 10 : Math.round(x / 100) * 100);
   const gauss = () => { let a = 0; for (let i = 0; i < 6; i++) a += Math.random(); return (a - 3) / 0.707; };
   function shopper(l) {
@@ -289,6 +310,7 @@
     product, stats, feed, decide, setWtp, redoByes, wishes,
     snapshot: () => JSON.stringify(s), restore(j) { s = JSON.parse(j); save(); },
     report, adminRemove, adminRestore, adminDismiss, setBan,
+    comments, addComment, deleteComment, reportComment, commentCount, demoComments, demoCount,
     /* 另一个标签页（比如管理后台）改了数据时，重新读一遍 */
     reload() { try { const x = JSON.parse(localStorage.getItem(KEY) || 'null'); if (x && x.v === 1) { s = x; migrate(); QL.i18n.set(s.set.lang); } } catch (e) { } },
     reloadIf(e) { if (e.key !== KEY || !e.newValue) return false; this.reload(); return true; },

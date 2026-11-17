@@ -33,7 +33,8 @@
     const p = S.product(it.pid); if (!p) return;
     if (visiting) {
       const st = view(), can = !S.s.dec[p.id] && !(p.kind === 'used' && S.s.sold[p.id]);
-      const sh = ui.sheet({ title: '', html: `${ui.picHTML(p, 'hero')}<div class="d-title">${esc(L(p.title))}</div><div class="d-price">${S.fmt(p.price)}</div><p class="hint">${t('it_theirs', { name: esc(st.name), x: S.fmt(p.price) })}</p><p class="d-desc">${esc(L(p.desc))}</p>${can ? `<div class="btnrow"><button class="b1" id="it-go">${t('it_goto')}</button></div>` : ''}` });
+      const sh = ui.sheet({ title: '', html: `${ui.picHTML(p, 'hero')}<div class="d-title">${esc(L(p.title))}</div><div class="d-price">${S.fmt(p.price)}</div><p class="hint">${t('it_theirs', { name: esc(st.name), x: S.fmt(p.price) })}</p><p class="d-desc">${esc(L(p.desc))}</p>${can ? `<div class="btnrow"><button class="b1" id="it-go">${t('it_goto')}</button></div>` : ''}${ui.commentsHTML(p)}` });
+      ui.bindComments(sh.body, p);
       const go = $('#it-go', sh.body); if (go) go.onclick = () => { sh.close(); QL.app.showFirst(p.id); };
       return;
     }
@@ -51,8 +52,9 @@
           <div class="li"><div class="g">${t('it_date')}</div><div class="v">${ui.date(inv.t)}</div></div>
           <div class="li"><div class="g">${t('it_from')}</div><div class="v">${esc(L(p.seller))}</div></div>
           <div class="li"><div class="g">${t('it_where')}</div><div class="v">${inv.slot >= 0 ? t('cat_' + p.cat) : t('r_storage')}</div></div>
-        </div></div>${extra}${act}`,
+        </div></div>${extra}${act}${inv.sample ? '' : ui.commentsHTML(p)}`,
     });
+    if (!inv.sample) ui.bindComments(sh.body, p);
     sh.body.onclick = (e) => {
       const a = e.target.closest('[data-a]'); if (!a) return; sh.close();
       if (a.dataset.a === 'resell') QL.post.startResell(inv.id);

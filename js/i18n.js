@@ -97,6 +97,11 @@
     err_already: '你已经买过这件了', err_own: '这是你自己上架的', err_setup: '先完成登录设置', err_wait: '每周预算 7 天只能改一次', err_late: '太久了，不能撤销了',
     err_used: '闲置买下后不能撤销', err_listed: '这件正在出闲置，不能撤销', err_limit: '操作太频繁，休息一下再来', err_imgs: '图片上传失败，换一张试试',
     err_auth: '请先登录', err_otp: '验证码不对或已过期', err_rate: '发送太频繁了，过一分钟再试', err_weekly: '预算金额不对', err_name: '起个昵称吧', err_title: '给商品起个名字',
+    cm_title: '评论', cm_ph: '说说你为什么买，或者为什么不买…', cm_send: '发送', cm_login: '登录后参与评论', cm_empty: '还没有评论，来说第一句吧',
+    cm_count: '{n} 条评论', cm_buy: '买了', cm_bye: '没买', cm_wish: '想买，钱不够', cm_seller: '卖家', cm_del: '删除', cm_del_q: '删除这条评论？',
+    cm_rep: '举报', cm_rep_title: '举报这条评论', cm_rep_done: '已收到举报，这条评论先帮你隐藏了', cm_hint: '你的评论旁边会显示你对这件商品选了买还是不买',
+    rep_abuse: '人身攻击或骚扰', err_body: '评论写 1 到 300 个字',
+    ago_now: '刚刚', ago_m: '{n} 分钟前', ago_h: '{n} 小时前', ago_d: '{n} 天前',
     sold_out: '已被别人买走',
   };
   const en = {
@@ -187,6 +192,11 @@
     err_already: 'You already bought this', err_own: "That's your own listing", err_setup: 'Finish signing up first', err_wait: 'You can change your weekly budget once every 7 days', err_late: 'Too late to undo',
     err_used: "Pre-loved purchases can't be undone", err_listed: "It's listed for resale, so it can't be undone", err_limit: 'Too many actions — take a short break', err_imgs: 'Image upload failed — try another one',
     err_auth: 'Please sign in first', err_otp: 'That code is wrong or has expired', err_rate: 'Too many emails — try again in a minute', err_weekly: 'That budget amount looks wrong', err_name: 'Pick a nickname', err_title: 'Give your item a name',
+    cm_title: 'Comments', cm_ph: 'Why would you buy it — or not?', cm_send: 'Post', cm_login: 'Sign in to comment', cm_empty: 'No comments yet. Say the first word.',
+    cm_count: '{n} comments', cm_buy: 'Bought', cm_bye: 'Passed', cm_wish: 'Wants it', cm_seller: 'Seller', cm_del: 'Delete', cm_del_q: 'Delete this comment?',
+    cm_rep: 'Report', cm_rep_title: 'Report this comment', cm_rep_done: 'Report received. The comment is hidden for you.', cm_hint: 'Your Buy or Bye choice for this item shows next to your comment',
+    rep_abuse: 'Harassment or abuse', err_body: 'Comments must be 1–300 characters',
+    ago_now: 'just now', ago_m: '{n}m ago', ago_h: '{n}h ago', ago_d: '{n}d ago',
     sold_out: 'Someone else bought it',
   };
   const dict = { zh, en };

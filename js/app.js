@@ -21,6 +21,63 @@
     return `${ui.picHTML(p, 'pic', url)}<div class="meta"><div class="chips">${ui.chipHTML(p)}<span>${esc(L(p.seller))}</span></div>
       <h2 class="title">${esc(L(p.title))}</h2><p class="desc">${esc(L(p.desc))}</p><div class="price">${ui.priceHTML(p.price)}</div></div>`;
   };
+  ui.ago = function (ts) {
+    const m = Math.max(0, (Date.now() - ts) / 6e4);
+    if (m < 1) return t('ago_now'); if (m < 60) return t('ago_m', { n: Math.floor(m) });
+    if (m < 1440) return t('ago_h', { n: Math.floor(m / 60) }); if (m < 43200) return t('ago_d', { n: Math.floor(m / 1440) });
+    return ui.date(ts);
+  };
+  ui.moreLabel = (p) => { const n = S.commentCount ? S.commentCount(p.id) : 0; return t('details') + (n ? ' · ' + t('cm_count', { n }) : ''); };
+
+  /* ---------- 评论区（商品详情、房间物品详情里都用这一套） ---------- */
+  ui.commentsHTML = (p) => `<div class="cmts" data-pid="${esc(p.id)}"><h4 class="cm-h">${t('cm_title')} <span class="cm-n"></span></h4><div class="cm-form"></div><div class="cm-list"><p class="cm-empty">…</p></div></div>`;
+  const TAG = { buy: 'cm_buy', bye: 'cm_bye', wish: 'cm_wish', seller: 'cm_seller' };
+  function cmItem(c) {
+    const tag = TAG[c.d] ? `<span class="cm-tag ${c.d}">${t(TAG[c.d])}</span>` : '';
+    const act = c.demo ? '' : c.mine ? `<button class="cm-a" data-del="${esc(c.id)}">${t('cm_del')}</button>` : `<button class="cm-a" data-rep="${esc(c.id)}">${t('cm_rep')}</button>`;
+    return `<div class="cm" data-id="${esc(c.id)}"><canvas class="px cm-av" width="16" height="18"></canvas><div class="cm-b"><div class="cm-top"><b>${esc(c.name || '…')}</b>${tag}<span class="cm-time">${ui.ago(c.t)}</span>${act}</div><p>${esc(c.body)}</p></div></div>`;
+  }
+  ui.bindComments = function (root, p) {
+    const box = $('.cmts', root); if (!box) return;
+    const list = $('.cm-list', box), form = $('.cm-form', box), num = $('.cm-n', box);
+    let items = [];
+    const paint = () => {
+      num.textContent = items.length ? items.length : '';
+      list.innerHTML = items.length ? items.map(cmItem).join('') : `<p class="cm-empty">${t('cm_empty')}</p>`;
+      $$('.cm', list).forEach((el, i) => G.avatar($('canvas', el), items[i].ch || {}));
+    };
+    const load = () => Promise.resolve(S.comments(p.id)).then((r) => { items = r.filter((c) => !S.s.hide['c:' + c.id]); paint(); }, () => { list.innerHTML = `<p class="cm-empty">${t('err_net')}</p>`; });
+    const drawForm = () => {
+      if (!S.authed()) { form.innerHTML = `<button class="b2 sm cm-login">${t('cm_login')}</button>`; $('.cm-login', form).onclick = () => QL.onboard.start(drawForm); return; }
+      form.innerHTML = `<form class="cm-f"><textarea maxlength="300" rows="1" placeholder="${t('cm_ph')}"></textarea><button type="submit" class="b1 sm">${t('cm_send')}</button></form><p class="hint cm-hint">${t('cm_hint')}</p>`;
+      const f = $('form', form), ta = $('textarea', form), btn = $('button', form);
+      ta.oninput = () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; };
+      f.onsubmit = (e) => {
+        e.preventDefault(); const v = ta.value.trim(); if (!v || btn.disabled) return;
+        btn.disabled = true;
+        Promise.resolve(S.addComment(p.id, v)).then((c) => { items.unshift(c); ta.value = ''; ta.style.height = ''; paint(); refreshMore(); }, (er) => ui.toast(ui.errText(er))).then(() => (btn.disabled = false));
+      };
+    };
+    list.onclick = (e) => {
+      const d = e.target.closest('[data-del]'), r = e.target.closest('[data-rep]');
+      if (d) {
+        if (!confirm(t('cm_del_q'))) return;
+        const id = isNaN(+d.dataset.del) ? d.dataset.del : +d.dataset.del;
+        Promise.resolve(S.deleteComment(id, p.id)).then(() => { items = items.filter((c) => String(c.id) !== String(id)); paint(); refreshMore(); }, (er) => ui.toast(ui.errText(er)));
+      } else if (r) {
+        const id = isNaN(+r.dataset.rep) ? r.dataset.rep : +r.dataset.rep;
+        const sh = ui.sheet({ title: t('cm_rep_title'), html: `<div class="list">${['abuse', 'porn', 'illegal', 'fake', 'other'].map((k) => `<button class="li" data-r="${k}"><div class="g">${t('rep_' + k)}</div><div class="v">→</div></button>`).join('')}</div>` });
+        sh.body.onclick = (ev) => {
+          const b = ev.target.closest('[data-r]'); if (!b) return; sh.close();
+          Promise.resolve(S.reportComment(id, b.dataset.r, p.id)).catch(() => { }); S.s.hide['c:' + id] = 1; S.save();
+          items = items.filter((c) => String(c.id) !== String(id)); paint(); ui.toast(t('cm_rep_done'));
+        };
+      }
+    };
+    drawForm(); load();
+  };
+  ui.openComments = (p) => { const sh = ui.sheet({ title: esc(L(p.title)), html: ui.commentsHTML(p) }); ui.bindComments(sh.body, p); };
+  function refreshMore() { const b = curEl && $('.more', curEl); if (b && cur) b.textContent = ui.moreLabel(cur); }
   ui.date = (ts) => new Date(ts).toLocaleDateString(QL.i18n.lang === 'zh' ? 'zh-CN' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
   let toastT = 0;
@@ -99,7 +156,7 @@
 
   function cardEl(p, cls) {
     const el = document.createElement('div'); el.className = 'card ' + (cls || '');
-    el.innerHTML = `<div class="flip"><div class="face front">${ui.cardFront(p)}<button class="more">${t('details')}</button><div class="stamp s-buy">Buy</div><div class="stamp s-bye">Bye</div></div><div class="face back"></div></div>`;
+    el.innerHTML = `<div class="flip"><div class="face front">${ui.cardFront(p)}<button class="more">${ui.moreLabel(p)}</button><div class="stamp s-buy">Buy</div><div class="stamp s-bye">Bye</div></div><div class="face back"></div></div>`;
     return el;
   }
   function renderDeck(enter) {
@@ -253,8 +310,9 @@
     const sh = ui.sheet({
       title: '', html: `${ui.picHTML(p, 'hero')}${imgs}<div class="chips" style="margin-top:16px">${ui.chipHTML(p)}<span>${esc(L(p.seller))}</span></div>
         <div class="d-title">${esc(L(p.title))}</div><div class="d-price">${S.fmt(p.price)}</div><p class="d-desc">${esc(L(p.desc))}</p>
-        <div class="sec"><div class="list"><div class="li"><div class="g">${t('p_cat')}</div><div class="v">${t('cat_' + p.cat)}</div></div></div></div><button class="report" id="d-rep">${t('rep_btn')}</button>`,
+        <div class="sec"><div class="list"><div class="li"><div class="g">${t('p_cat')}</div><div class="v">${t('cat_' + p.cat)}</div></div></div></div>${ui.commentsHTML(p)}<button class="report" id="d-rep">${t('rep_btn')}</button>`,
     });
+    ui.bindComments(sh.body, p);
     $('#d-rep', sh.body).onclick = () => { sh.close(); openReport(p); };
   }
   function openReport(p) {
