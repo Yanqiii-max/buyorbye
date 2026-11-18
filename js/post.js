@@ -31,6 +31,14 @@
     if (th) { const pb = priceBase(), tb = targetBase(); th.textContent = pb && tb ? t('p_target_hint', { n: Math.ceil(tb / pb).toLocaleString('en-US') }) : t('p_target_hint0'); }
   }
 
+  function stkHTML() {
+    const busy = !!d.cutting, ok = !!d.cut && !busy;
+    const hint = busy || d.cut ? '' : t('p_cut_fail');
+    return `<label>${t('p_sticker')}</label><div class="stk"><div class="box${busy ? ' busy' : ''}"><img src="${stickerURL() || ''}" alt=""></div><div class="segc" id="p-cut"><button data-u="1" class="${d.useCut && ok ? 'on' : ''}" ${ok ? '' : 'disabled style="opacity:.45"'}>${busy ? t('p_cutting') : t('p_cut_auto')}</button><button data-u="0" class="${!(d.useCut && ok) ? 'on' : ''}">${t('p_cut_whole')}</button></div></div>${hint ? `<p class="hint">${hint}</p>` : ''}`;
+  }
+  function updStk() { const el = $('#p-stk', root); if (el) { el.innerHTML = stkHTML(); bindStk(); } }
+  function bindStk() { const cut = $('#p-cut', root); if (cut) cut.onclick = (e) => { const b = e.target.closest('button'); if (b && !b.disabled) { d.useCut = b.dataset.u === '1'; d.picked = 1; updStk(); } }; }
+
   function render() {
     root.classList.toggle('wide', wide() && tab === 'new');
     const n = S.s.lst.length;
@@ -48,7 +56,7 @@
         <div class="fld"><label>${t('p_desc')}</label><textarea class="in" id="p-desc" maxlength="400" placeholder="${t('p_desc_ph')}">${esc(d.desc)}</textarea></div>
         <div class="fld"><label>${t('p_cat')}</label><div class="cats" id="p-cats">${CATS.map((c) => `<button data-c="${c}" class="${d.cat === c ? 'on' : ''}">${t('cat_' + c)}</button>`).join('')}</div>
           ${d.cat === 'wall' ? `<label class="chk"><input type="checkbox" id="p-frame" ${d.frame ? 'checked' : ''}>${t('p_frame')}</label>` : ''}</div>
-        ${showStk ? `<div class="fld"><label>${t('p_sticker')}</label><div class="stk"><div class="box"><img src="${stickerURL() || ''}" alt=""></div><div class="segc" id="p-cut"><button data-u="1" class="${d.useCut && d.cut ? 'on' : ''}" ${d.cut ? '' : 'disabled style="opacity:.35"'}>${t('p_cut_auto')}</button><button data-u="0" class="${!(d.useCut && d.cut) ? 'on' : ''}">${t('p_cut_whole')}</button></div></div>${d.cut ? '' : `<p class="hint">${t('p_cut_fail')}</p>`}</div>` : ''}
+        ${showStk ? `<div class="fld" id="p-stk">${stkHTML()}</div>` : ''}
         ${d.kind === 'new' ? `<div class="fld"><label>${t('p_target')}</label><div class="money sm"><span>${S.sym()}</span><input id="p-target" inputmode="decimal" autocomplete="off" maxlength="12" placeholder="0" value="${esc(d.target)}"></div><p class="hint" id="p-thint"></p></div>` : ''}
         <div class="pubbar">${wide() ? '' : `<button class="b2" id="p-prev" style="height:58px;border-radius:20px">${t('p_prev_btn')}</button>`}<button class="b1" id="p-pub">${t('p_submit')}</button></div>
         <p class="hint" id="p-need" style="text-align:center"></p><p class="rules">${t('rules_agree')}<button id="p-rules">${t('rules_name')}</button></p></div>
@@ -56,6 +64,7 @@
     }
     root.innerHTML = h;
     bind(); updateLive();
+    if (tab === 'new') G.cutWarm();
   }
 
   function bind() {
@@ -66,7 +75,7 @@
     on('#p-title', 'title'); on('#p-price', 'price'); on('#p-desc', 'desc'); on('#p-target', 'target');
     $('#p-cats', root).onclick = (e) => { const b = e.target.closest('button'); if (b) { d.cat = b.dataset.c; if (d.cat === 'wall' && !d.fromInv) d.frame = true; render(); } };
     const fr = $('#p-frame', root); if (fr) fr.onchange = () => { d.frame = fr.checked; render(); };
-    const cut = $('#p-cut', root); if (cut) cut.onclick = (e) => { const b = e.target.closest('button'); if (b && !b.disabled) { d.useCut = b.dataset.u === '1'; render(); } };
+    bindStk();
     const add = $('#p-add', root), file = $('#p-file', root);
     if (add) add.onclick = () => file.click();
     file.onchange = () => {
@@ -86,10 +95,17 @@
     $('#p-pub', root).onclick = publish; $('#p-rules', root).onclick = () => ui.doc('rules');
   }
   function makeSticker() {
-    d.cut = d.whole = null; d.useCut = true;
+    d.cut = d.whole = null; d.useCut = true; d.cutting = 0; d.picked = 0; d.cutP = null;
+    const tok = (d.cutTok = {}), draft = d;
     if (!d.imgs.length) return Promise.resolve();
     return G.load(d.imgs[0]).then((img) => {
-      const c = G.cutout(img); d.cut = c ? c.toDataURL('image/png') : null; d.whole = G.wholeSticker(img).toDataURL('image/png'); d.useCut = !!c;
+      d.whole = G.wholeSticker(img).toDataURL('image/png'); d.useCut = false; d.cutting = 1;
+      // 智能抠图在后台跑（通常 1 秒内），先用整张图，好了自动换上，不打断用户填表
+      d.cutP = G.aiCutout(img).then((c) => {
+        if (draft.cutTok !== tok) return;
+        draft.cutting = 0; draft.cut = c ? c.toDataURL('image/png') : null; if (!draft.picked) draft.useCut = !!c; draft.cutP = null;
+        if (d === draft) updStk();
+      });
     }).catch(() => { });
   }
   function publish() {
@@ -97,7 +113,7 @@
     if (S.s.mod.banned.me) return ui.toast(t('banned_msg'));
     const frame = d.cat === 'wall' && d.frame, btn = $('#p-pub', root);
     if (btn.dataset.busy) return; btn.dataset.busy = 1; btn.disabled = true; btn.textContent = t('p_publishing');
-    Promise.resolve(S.addListing({
+    Promise.race([d.cutP, new Promise((r) => setTimeout(r, 8000))]).then(() => S.addListing({
       kind: d.kind, title: d.title.trim(), desc: d.desc.trim(), price: priceBase(), cat: d.cat, frame, target: targetBase(),
       art: d.art, pic: d.pic, sid: d.sid, imgs: d.art || d.pic ? [] : d.imgs, sticker: d.art || d.pic || frame ? null : stickerURL(), bg: d.bg, rh: d.rh, ref: d.ref, fromInv: d.fromInv,
     })).then((l) => {

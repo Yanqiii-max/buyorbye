@@ -87,6 +87,98 @@
     return G.trim(c);
   };
 
+  /* AI 抠出的图做清理：去雾状半透明、只留主体（去掉文字、小碎点）、补主体里的小洞 */
+  G.refine = function (img) {
+    const w = img.width, h = img.height, c = G.cv(w, h), x = c.getContext('2d'); x.drawImage(img, 0, 0);
+    const d = x.getImageData(0, 0, w, h), p = d.data, N = w * h;
+    const a = new Uint8Array(N); for (let k = 0; k < N; k++) a[k] = p[k * 4 + 3];
+    // 1. 分块：alpha≥110 算主体像素，8 邻接连成块
+    const lab = new Int32Array(N), sizes = [0], sums = [0], st = []; let nl = 0;
+    for (let k0 = 0; k0 < N; k0++) {
+      if (a[k0] < 110 || lab[k0]) continue;
+      nl++; let cnt = 0, sum = 0; lab[k0] = nl; st.push(k0);
+      while (st.length) { const k = st.pop(), px = k % w, py = (k / w) | 0; cnt++; sum += a[k];
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const X = px + dx, Y = py + dy; if (X < 0 || Y < 0 || X >= w || Y >= h) continue; const n = Y * w + X; if (a[n] >= 110 && !lab[n]) { lab[n] = nl; st.push(n); } } }
+      sizes.push(cnt); sums.push(sum);
+    }
+    if (nl === 0) return null;
+    // 留最大的主体；别的块要够大、而且模型很确定（平均不透明度高）才留，比如套装里的杯和托。发灰的雾团、文字丢掉
+    const big = Math.max.apply(null, sizes), keep = new Uint8Array(nl + 1);
+    for (let i = 1; i <= nl; i++) keep[i] = sizes[i] === big || (sizes[i] >= big * 0.12 && sums[i] / sizes[i] >= 200) ? 1 : 0;
+    // 2. 保留区：被保留的块 + 它们周围 6px 内的半透明边缘
+    const R = Math.max(3, Math.round(Math.max(w, h) / 160));
+    const core = new Uint8Array(N); for (let k = 0; k < N; k++) if (lab[k] && keep[lab[k]]) core[k] = 1;
+    // 距离膨胀（两遍 box）
+    const dil = (m, r) => { const t = new Uint8Array(N), o = new Uint8Array(N);
+      for (let y = 0; y < h; y++) { let s = 0; for (let xx = -r; xx < w; xx++) { if (xx + r < w) s += m[y * w + xx + r]; if (xx - r - 1 >= 0) s -= m[y * w + xx - r - 1]; if (xx >= 0) t[y * w + xx] = s > 0; } }
+      for (let xx = 0; xx < w; xx++) { let s = 0; for (let y = -r; y < h; y++) { if (y + r < h) s += t[(y + r) * w + xx]; if (y - r - 1 >= 0) s -= t[(y - r - 1) * w + xx]; if (y >= 0) o[y * w + xx] = s > 0; } }
+      return o; };
+    const zone = dil(core, R);
+    // 3. 补洞：从边上漫进来的“外面”以外的空洞，如果很小（<主体 1.5%）就填满
+    const out = new Uint8Array(N); const q = [];
+    for (let xx = 0; xx < w; xx++) { q.push(xx, (h - 1) * w + xx); } for (let y = 0; y < h; y++) { q.push(y * w, y * w + w - 1); }
+    q.forEach((k) => { if (!core[k]) out[k] = 1; }); const st2 = q.filter((k) => out[k]);
+    while (st2.length) { const k = st2.pop(), px = k % w, py = (k / w) | 0;
+      const nb = [px > 0 ? k - 1 : -1, px < w - 1 ? k + 1 : -1, py > 0 ? k - w : -1, py < h - 1 ? k + w : -1];
+      for (const n of nb) if (n >= 0 && !out[n] && !core[n]) { out[n] = 1; st2.push(n); } }
+    const hl = new Int32Array(N); let fg = 0;
+    for (let k = 0; k < N; k++) if (core[k]) fg++;
+    for (let k0 = 0; k0 < N; k0++) { if (core[k0] || out[k0] || hl[k0]) continue;
+      const comp = [k0]; hl[k0] = 1; const s3 = [k0];
+      while (s3.length) { const k = s3.pop(), px = k % w, py = (k / w) | 0;
+        const nb = [px > 0 ? k - 1 : -1, px < w - 1 ? k + 1 : -1, py > 0 ? k - w : -1, py < h - 1 ? k + w : -1];
+        for (const n of nb) if (n >= 0 && !core[n] && !out[n] && !hl[n]) { hl[n] = 1; s3.push(n); comp.push(n); } }
+      if (comp.length < fg * 0.015) comp.forEach((k) => { a[k] = Math.max(a[k], 255); });
+    }
+    // 4. 写回 alpha：保留区外清零；很淡的雾清零；把 alpha 稍微拉陡，边缘干净但不锯齿
+    for (let k = 0; k < N; k++) {
+      let v = zone[k] ? a[k] : 0;
+      v = v < 28 ? 0 : Math.min(255, Math.round((v - 28) * 255 / 200));
+      p[k * 4 + 3] = v;
+    }
+    x.putImageData(d, 0, 0);
+    return G.trim(c);
+  };
+
+  /* 智能抠图：后台线程里跑 U²-Net-p 小模型（lib/cut/，约 8MB，首次悄悄加载、之后走缓存，每张不到 1 秒），
+     模型给出前景蒙版 → 贴回原图 → G.refine 清理。失败时退回老的纯色背景抠图。 */
+  let cutW = null, cutN = 0;
+  function cutCall(msg) {
+    return new Promise((res, rej) => {
+      try { if (!cutW) { cutW = new Worker(new URL('lib/cut/worker.mjs', location.href).href, { type: 'module' }); cutW.onerror = (e) => { cutW = null; rej(e); }; } } catch (e) { return rej(e); }
+      const id = ++cutN, w = cutW;
+      const on = (e) => { const m = e.data; if (m.id !== id) return; w.removeEventListener('message', on); m.err ? rej(new Error(m.err)) : res(m); };
+      w.addEventListener('message', on); w.postMessage(Object.assign({ id }, msg));
+    });
+  }
+  /* 进上架页时提前悄悄加载（省流量模式下不提前） */
+  let warmed = false;
+  G.cutWarm = function () {
+    if (warmed || (navigator.connection && navigator.connection.saveData)) return;
+    warmed = true; cutCall({ warm: 1 }).catch(() => { warmed = false; });
+  };
+  G.aiCutout = function (img, maxSide) {
+    maxSide = maxSide || 460;
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height, s = Math.min(1, 1000 / Math.max(iw, ih));
+    const c = cv(iw * s, ih * s), x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
+    const S = 320, sm = cv(S, S), sx = sm.getContext('2d'); sx.drawImage(c, 0, 0, S, S);
+    let rgba; try { rgba = sx.getImageData(0, 0, S, S).data; } catch (e) { return Promise.resolve(G.cutout(img)); }
+    return cutCall({ rgba, S }).then((r) => {
+      const m = cv(S, S), mx = m.getContext('2d'), md = mx.createImageData(S, S);
+      for (let i = 0; i < S * S; i++) md.data[i * 4 + 3] = r.mask[i];
+      mx.putImageData(md, 0, 0);
+      const big = cv(c.width, c.height), bx = big.getContext('2d'); bx.imageSmoothingQuality = 'high'; bx.drawImage(m, 0, 0, c.width, c.height);
+      const al = bx.getImageData(0, 0, c.width, c.height).data, cd = x.getImageData(0, 0, c.width, c.height);
+      for (let i = 3; i < al.length; i += 4) cd.data[i] = al[i];
+      x.putImageData(cd, 0, 0);
+      const o = G.refine(c); if (!o) return null;
+      let fg = 0; const dd = o.getContext('2d').getImageData(0, 0, o.width, o.height).data; for (let i = 3; i < dd.length; i += 4) if (dd[i] > 128) fg++;
+      if (fg < c.width * c.height * 0.01) return null;            // 几乎什么都没抠到
+      const k = Math.min(1, maxSide / Math.max(o.width, o.height)); if (k >= 1) return o;
+      const r2 = cv(o.width * k, o.height * k), rx = r2.getContext('2d'); rx.imageSmoothingQuality = 'high'; rx.drawImage(o, 0, 0, r2.width, r2.height); return r2;
+    }).catch((e) => { console.warn('ai cutout', e); if (cutW) { cutW.terminate(); cutW = null; warmed = false; } return G.cutout(img); });
+  };
+
   /* 整张图做成圆角小卡片 */
   G.wholeSticker = function (img, maxSide) {
     maxSide = maxSide || 340;
