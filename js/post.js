@@ -33,7 +33,7 @@
 
   function stkHTML() {
     const busy = !!d.cutting, ok = !!d.cut && !busy;
-    const hint = busy || d.cut ? '' : t('p_cut_fail');
+    const hint = busy || d.cut || d.slow ? '' : t('p_cut_fail');
     return `<label>${t('p_sticker')}</label><div class="stk"><div class="box${busy ? ' busy' : ''}"><img src="${stickerURL() || ''}" alt=""></div><div class="segc" id="p-cut"><button data-u="1" class="${d.useCut && ok ? 'on' : ''}" ${ok ? '' : 'disabled style="opacity:.45"'}>${busy ? t('p_cutting') : t('p_cut_auto')}</button><button data-u="0" class="${!(d.useCut && ok) ? 'on' : ''}">${t('p_cut_whole')}</button></div></div>${hint ? `<p class="hint">${hint}</p>` : ''}`;
   }
   function updStk() { const el = $('#p-stk', root); if (el) { el.innerHTML = stkHTML(); bindStk(); } }
@@ -95,15 +95,18 @@
     $('#p-pub', root).onclick = publish; $('#p-rules', root).onclick = () => ui.doc('rules');
   }
   function makeSticker() {
-    d.cut = d.whole = null; d.useCut = true; d.cutting = 0; d.picked = 0; d.cutP = null;
+    d.cut = d.whole = null; d.useCut = true; d.cutting = 0; d.slow = 0; d.picked = 0; d.cutP = null;
     const tok = (d.cutTok = {}), draft = d;
     if (!d.imgs.length) return Promise.resolve();
     return G.load(d.imgs[0]).then((img) => {
-      d.whole = G.wholeSticker(img).toDataURL('image/png'); d.useCut = false; d.cutting = 1;
-      // 智能抠图在后台跑（通常 1 秒内），先用整张图，好了自动换上，不打断用户填表
+      d.whole = G.wholeSticker(img).toDataURL('image/png'); d.useCut = false; d.cutting = 1; d.slow = 0;
+      // 智能抠图在后台跑（通常 1 秒内），先用整张图，好了自动换上，不打断用户填表。
+      // 网慢、模型还没下完时：4 秒后不再显示“抠图中”，安静地先用整张图，等抠好了再悄悄换上
+      const slowT = setTimeout(() => { if (draft.cutTok === tok && draft.cutting) { draft.cutting = 0; draft.slow = 1; if (d === draft) updStk(); } }, 4000);
       d.cutP = G.aiCutout(img).then((c) => {
+        clearTimeout(slowT);
         if (draft.cutTok !== tok) return;
-        draft.cutting = 0; draft.cut = c ? c.toDataURL('image/png') : null; if (!draft.picked) draft.useCut = !!c; draft.cutP = null;
+        draft.cutting = 0; draft.slow = 0; draft.cut = c ? c.toDataURL('image/png') : null; if (!draft.picked) draft.useCut = !!c; draft.cutP = null;
         if (d === draft) updStk();
       });
     }).catch(() => { });
@@ -113,7 +116,7 @@
     if (S.s.mod.banned.me) return ui.toast(t('banned_msg'));
     const frame = d.cat === 'wall' && d.frame, btn = $('#p-pub', root);
     if (btn.dataset.busy) return; btn.dataset.busy = 1; btn.disabled = true; btn.textContent = t('p_publishing');
-    Promise.race([d.cutP, new Promise((r) => setTimeout(r, 8000))]).then(() => S.addListing({
+    Promise.race([d.slow ? null : d.cutP, new Promise((r) => setTimeout(r, 8000))]).then(() => S.addListing({
       kind: d.kind, title: d.title.trim(), desc: d.desc.trim(), price: priceBase(), cat: d.cat, frame, target: targetBase(),
       art: d.art, pic: d.pic, sid: d.sid, imgs: d.art || d.pic ? [] : d.imgs, sticker: d.art || d.pic || frame ? null : stickerURL(), bg: d.bg, rh: d.rh, ref: d.ref, fromInv: d.fromInv,
     })).then((l) => {
